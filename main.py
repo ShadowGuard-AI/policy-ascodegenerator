@@ -99,6 +99,9 @@ def validate_policy_data(policy_data: Dict[str, Any]) -> None:
         if "ports" not in rule:
             raise ValueError("Each rule must contain a 'ports'")
 
+        # I check addresses and ports and nothing else. Action, protocol, and any extra keys
+        # pass straight through to the template unchecked, so a typo there becomes generated
+        # code rather than an error from me.
         for field in ("source", "destination"):
             value = rule[field]
             if not isinstance(value, str):
@@ -107,6 +110,8 @@ def validate_policy_data(policy_data: Dict[str, Any]) -> None:
                 ipaddress.ip_address(value)
             except ValueError:
                 try:
+                    # strict=False means a network written with host bits set gets quietly masked
+                    # down to its base address. The policy I validate is not quite what was typed.
                     ipaddress.ip_network(value, strict=False)
                 except ValueError:
                     raise ValueError(
@@ -117,6 +122,8 @@ def validate_policy_data(policy_data: Dict[str, Any]) -> None:
         if not isinstance(ports, list) or not ports:
             raise ValueError("Rule 'ports' must be a non-empty list of integers.")
         for port in ports:
+            # type() rather than isinstance() is deliberate here: True is an int subclass in
+            # Python, and I do not want a boolean passing as port 1.
             if type(port) is not int or not 1 <= port <= 65535:
                 raise ValueError(f"Rule 'ports' entries must be integers in 1..65535: {port!r}")
 
@@ -138,6 +145,8 @@ def generate_code_from_template(template_dir: str, template_name: str, policy_da
         Exception: For other template rendering errors.
     """
     try:
+        # This is a plain Environment, not a sandboxed one. The template directory is trusted
+        # code as far as I am concerned, since a template can do far more than fill values.
         env = Environment(loader=FileSystemLoader(template_dir))
         template = env.get_template(template_name)
         code = template.render(policy_data)
@@ -191,6 +200,8 @@ def load_policy_data(policy_file: str) -> Dict[str, Any]:
         import json
         import yaml
 
+        # The format test is the file name suffix exactly as typed. A policy named in capitals,
+        # POLICY.JSON, is unsupported here even when its content is fine.
         if policy_file.endswith(".json"):
             with open(policy_file, "r") as f:
                 return json.load(f)
