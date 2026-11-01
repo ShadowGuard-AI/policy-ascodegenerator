@@ -4,8 +4,8 @@ import logging
 import sys
 from typing import Dict, Any, List
 
-import networkx as nx
 import ipaddress
+import os
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 
 # Configure logging
@@ -85,6 +85,8 @@ def validate_policy_data(policy_data: Dict[str, Any]) -> None:
         raise ValueError("Policy data must contain 'rules' key")
     if not isinstance(policy_data["rules"], list):
         raise ValueError("'rules' must be a list")
+    if not policy_data["rules"]:
+        raise ValueError("No rules in policy data: nothing to generate.")
 
     for rule in policy_data["rules"]:
         if not isinstance(rule, dict):
@@ -96,6 +98,27 @@ def validate_policy_data(policy_data: Dict[str, Any]) -> None:
             raise ValueError("Each rule must contain a 'destination'")
         if "ports" not in rule:
             raise ValueError("Each rule must contain a 'ports'")
+
+        for field in ("source", "destination"):
+            value = rule[field]
+            if not isinstance(value, str):
+                raise ValueError(f"Rule '{field}' must be a string address or network: {value!r}")
+            try:
+                ipaddress.ip_address(value)
+            except ValueError:
+                try:
+                    ipaddress.ip_network(value, strict=False)
+                except ValueError:
+                    raise ValueError(
+                        f"Rule '{field}' is not a valid IP address or network: {value!r}"
+                    )
+
+        ports = rule["ports"]
+        if not isinstance(ports, list) or not ports:
+            raise ValueError("Rule 'ports' must be a non-empty list of integers.")
+        for port in ports:
+            if type(port) is not int or not 1 <= port <= 65535:
+                raise ValueError(f"Rule 'ports' entries must be integers in 1..65535: {port!r}")
 
 
 def generate_code_from_template(template_dir: str, template_name: str, policy_data: Dict[str, Any]) -> str:
@@ -196,6 +219,13 @@ def main() -> None:
     logging.getLogger().setLevel(args.log_level)
 
     try:
+        output_resolved = os.path.realpath(args.output_file)
+        if output_resolved == os.path.realpath(args.policy_file):
+            raise ValueError("Output file must not be the policy file.")
+        template_resolved = os.path.realpath(os.path.join(args.template_dir, args.template_name))
+        if output_resolved == template_resolved:
+            raise ValueError("Output file must not be the template file.")
+
         # 1. Load policy data
         policy_data = load_policy_data(args.policy_file)
 
